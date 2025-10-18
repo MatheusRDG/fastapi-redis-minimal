@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Redis Event Stream Monitor</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-card.queue {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .stat-card.produced {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .stat-card.processed {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-start {
+            background: #43e97b;
+            color: white;
+        }
+
+        .btn-stop {
+            background: #f5576c;
+            color: white;
+        }
+
+        .btn-process {
+            background: #4facfe;
+            color: white;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-weight: 500;
+        }
+
+        .status.running {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.stopped {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 4px;
+        }
+
+        .info-box h3 {
+            margin-top: 0;
+            color: #1976D2;
+        }
+
+        .info-box ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .info-box li {
+            margin: 5px 0;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🚀 Redis Event Stream Monitor</h1>
+        <p class="subtitle">Producer-Consumer Pattern | Redis as Message Broker</p>
+
+        <div class="stats-grid">
+            <div class="stat-card queue">
+                <div class="stat-label">Queue Size</div>
+                <div class="stat-value" id="queue_size">-</div>
+                <div style="font-size: 12px; margin-top: 5px;">Events in Redis</div>
+            </div>
+            <div class="stat-card produced">
+                <div class="stat-label">Total Produced</div>
+                <div class="stat-value" id="total_produced">-</div>
+                <div style="font-size: 12px; margin-top: 5px;">Events generated</div>
+            </div>
+            <div class="stat-card processed">
+                <div class="stat-label">Total Processed</div>
+                <div class="stat-value" id="total_processed">-</div>
+                <div style="font-size: 12px; margin-top: 5px;">Saved to Postgres</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn-start" onclick="startProducer()">▶️ Start Producer</button>
+            <button class="btn-stop" onclick="stopProducer()">⏹️ Stop Producer</button>
+            <button class="btn-process" onclick="processNow()">⚡ Process Batch Now</button>
+        </div>
+
+        <div id="status" class="status stopped">
+            Producer Status: STOPPED
+        </div>
+
+        <div class="info-box">
+            <h3>📚 What's Happening?</h3>
+            <ul>
+                <li><strong>Producer:</strong> Generates 10 random numbers/second → Redis list (fast writes)</li>
+                <li><strong>Redis Queue:</strong> Buffers events in memory (handles bursts)</li>
+                <li><strong>Consumer:</strong> Background task processes batches every 5 seconds → Postgres</li>
+                <li><strong>Result:</strong> Decoupled system — Redis absorbs spikes, Postgres gets stable batches</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let producerRunning = false;
+
+        async function loadStats() {
+            try {
+                const res = await fetch("/stats");
+                const data = await res.json();
+
+                document.getElementById("queue_size").innerText = data.queue_size.toLocaleString();
+                document.getElementById("total_produced").innerText = data.total_produced.toLocaleString();
+                document.getElementById("total_processed").innerText = data.total_processed.toLocaleString();
+            } catch (error) {
+                console.error("Error loading stats:", error);
+            }
+        }
+
+        async function startProducer() {
+            const res = await fetch("/producer/start", { method: "POST" });
+            const data = await res.json();
+
+            if (data.status === "started" || data.status === "already_running") {
+                producerRunning = true;
+                updateStatus();
+            }
+        }
+
+        async function stopProducer() {
+            const res = await fetch("/producer/stop", { method: "POST" });
+            const data = await res.json();
+
+            if (data.status === "stopped") {
+                producerRunning = false;
+                updateStatus();
+            }
+        }
+
+        async function processNow() {
+            await fetch("/consumer/process", { method: "POST" });
+            setTimeout(loadStats, 500); // Refresh stats after processing
+        }
+
+        function updateStatus() {
+            const statusEl = document.getElementById("status");
+            if (producerRunning) {
+                statusEl.className = "status running";
+                statusEl.innerText = "Producer Status: RUNNING (10 events/sec)";
+            } else {
+                statusEl.className = "status stopped";
+                statusEl.innerText = "Producer Status: STOPPED";
+            }
+        }
+
+        // Auto-refresh stats every 1 second
+        setInterval(loadStats, 1000);
+        loadStats();
+    </script>
+</body>
+
+</html>
